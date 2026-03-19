@@ -89,7 +89,7 @@ import * as fs from 'fs';
 
     ServeStaticModule.forRoot({
       rootPath: path.join(process.cwd(), 'frontend', 'dist'),
-      exclude: ['/api/(.*)'],
+      exclude: ['/api*'],
     }),
     SettingsModule,
     AuthModule,
