@@ -62,23 +62,29 @@ import * as fs from 'fs';
       },
     }),
 
-    // Data DB (remote read-only)
+    // Data DB (remote read-only, optional — skips if DATA_DB_HOST not set)
     TypeOrmModule.forRootAsync({
       name: 'dataConnection',
       inject: [ConfigService],
-      useFactory: (cfg: ConfigService): TypeOrmModuleOptions => ({
-        type: 'mysql',
-        host: cfg.get<string>('DATA_DB_HOST'),
-        port: +(cfg.get<string>('DATA_DB_PORT') ?? '3306'),
-        username: cfg.get<string>('DATA_DB_USER'),
-        password: cfg.get<string>('DATA_DB_PASS'),
-        database: cfg.get<string>('DATA_DB_NAME'),
-        entities: [],
-        synchronize: false,
-        charset: 'utf8mb4',
-        connectTimeout: 30000,
-        extra: { connectionLimit: 5, acquireTimeout: 60000, timeout: 120000 },
-      }),
+      useFactory: (cfg: ConfigService): TypeOrmModuleOptions => {
+        const host = cfg.get<string>('DATA_DB_HOST');
+        if (!host) {
+          return { type: 'sqlite', database: ':memory:', entities: [], synchronize: false };
+        }
+        return {
+          type: 'mysql',
+          host,
+          port: +(cfg.get<string>('DATA_DB_PORT') ?? '3306'),
+          username: cfg.get<string>('DATA_DB_USER'),
+          password: cfg.get<string>('DATA_DB_PASS'),
+          database: cfg.get<string>('DATA_DB_NAME'),
+          entities: [],
+          synchronize: false,
+          charset: 'utf8mb4',
+          connectTimeout: 30000,
+          extra: { connectionLimit: 5, acquireTimeout: 60000, timeout: 120000 },
+        };
+      },
     }),
 
     ServeStaticModule.forRoot({
