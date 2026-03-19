@@ -1,18 +1,12 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { TweetsService } from './tweets.service';
 import { TweetsController } from './tweets.controller';
-import { DataSource } from 'typeorm';
-import { getDataSourceToken } from '@nestjs/typeorm';
+import { TweetCache } from '../sync/tweet-cache.entity';
 
 @Module({
-  providers: [
-    TweetsService,
-    {
-      provide: 'DATA_SOURCE',
-      useFactory: (ds: DataSource) => ds,
-      inject: [getDataSourceToken('dataConnection')],
-    },
-  ],
+  imports: [TypeOrmModule.forFeature([TweetCache], 'appConnection')],
+  providers: [TweetsService],
   controllers: [TweetsController],
 })
 export class TweetsModule {}

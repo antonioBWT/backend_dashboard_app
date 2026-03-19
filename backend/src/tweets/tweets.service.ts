@@ -1,5 +1,7 @@
-import { Injectable, Inject } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { TweetCache } from '../sync/tweet-cache.entity';
 
 export interface TweetsFilters {
   theme?: string;
@@ -17,7 +19,7 @@ export interface TweetsFilters {
 @Injectable()
 export class TweetsService {
   constructor(
-    @Inject('DATA_SOURCE') private remoteDs: DataSource,
+    @InjectRepository(TweetCache, 'appConnection') private cacheRepo: Repository<TweetCache>,
   ) {}
 
   async findAll(filters: TweetsFilters) {
@@ -26,49 +28,41 @@ export class TweetsService {
     const offset = (page - 1) * limit;
 
     const sortColMap: Record<string, string> = {
-      views:    'views_count',
-      likes:    'likes_count',
-      retweets: 'retweets_count',
-      date:     'date_published',
+      views:    'viewsCount',
+      likes:    'likesCount',
+      retweets: 'retweetsCount',
+      date:     'datePublished',
     };
-    const orderCol = sortColMap[filters.sortBy ?? 'views'] ?? 'views_count';
+    const orderCol = sortColMap[filters.sortBy ?? 'views'] ?? 'viewsCount';
     const orderDir = filters.sortOrder === 'ASC' ? 'ASC' : 'DESC';
 
-    const conditions: string[] = [];
-    const params: any[]        = [];
+    const qb = this.cacheRepo.createQueryBuilder('t');
 
-    if (filters.theme)      { conditions.push('q.theme = ?');            params.push(filters.theme); }
-    if (filters.country)    { conditions.push('q.country = ?');          params.push(filters.country); }
-    if (filters.postStatus) { conditions.push('t.post_status = ?');      params.push(filters.postStatus); }
-    if (filters.dateFrom)   { conditions.push('t.date_published >= ?');  params.push(filters.dateFrom); }
-    if (filters.dateTo)     { conditions.push('t.date_published <= ?');  params.push(filters.dateTo); }
-    if (filters.search)     { conditions.push('t.post_text LIKE ?');     params.push(`%${filters.search}%`); }
+    if (filters.theme)      qb.andWhere('t.theme = :theme',           { theme: filters.theme });
+    if (filters.country)    qb.andWhere('t.country = :country',       { country: filters.country });
+    if (filters.postStatus) qb.andWhere('t.postStatus = :postStatus', { postStatus: filters.postStatus });
+    if (filters.dateFrom)   qb.andWhere('t.datePublished >= :from',   { from: filters.dateFrom });
+    if (filters.dateTo)     qb.andWhere('t.datePublished <= :to',     { to: filters.dateTo });
+    if (filters.search)     qb.andWhere('t.postText LIKE :search',    { search: `%${filters.search}%` });
 
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    qb.orderBy(`t.${orderCol}`, orderDir).skip(offset).take(limit);
 
-    const baseQuery = `
-      FROM x_tweets t
-      LEFT JOIN x_search_queries q ON q.id = t.query_id
-      ${where}
-    `;
-
-    const [rows, countRows] = await Promise.all([
-      this.remoteDs.query(
-        `SELECT t.*, q.theme, q.country ${baseQuery}
-         ORDER BY t.${orderCol} ${orderDir}
-         LIMIT ? OFFSET ?`,
-        [...params, limit, offset],
-      ),
-      this.remoteDs.query(
-        `SELECT COUNT(*) as total ${baseQuery}`,
-        params,
-      ),
-    ]);
-
-    const total = Number(countRows[0]?.total ?? 0);
+    const [data, total] = await qb.getManyAndCount();
 
     return {
-      data: rows,
+      data: data.map(t => ({
+        external_id:     t.externalId,
+        post_text:       t.postText,
+        author:          t.author,
+        post_status:     t.postStatus,
+        date_published:  t.datePublished,
+        views_count:     t.viewsCount,
+        likes_count:     t.likesCount,
+        retweets_count:  t.retweetsCount,
+        replies_count:   t.repliesCount,
+        theme:           t.theme,
+        country:         t.country,
+      })),
       total,
       page,
       limit,
@@ -77,28 +71,30 @@ export class TweetsService {
   }
 
   async getTopTweets(filters: TweetsFilters & { metric?: 'views' | 'likes' }) {
-    const sortCol = filters.metric === 'likes' ? 'likes_count' : 'views_count';
+    const orderCol = filters.metric === 'likes' ? 'likesCount' : 'viewsCount';
 
-    const conditions: string[] = ["t.post_status = 'original post'"];
-    const params: any[]        = [];
+    const qb = this.cacheRepo.createQueryBuilder('t')
+      .where("t.postStatus = 'original post'");
 
-    if (filters.theme)    { conditions.push('q.theme = ?');           params.push(filters.theme); }
-    if (filters.country)  { conditions.push('q.country = ?');         params.push(filters.country); }
-    if (filters.dateFrom) { conditions.push('t.date_published >= ?'); params.push(filters.dateFrom); }
-    if (filters.dateTo)   { conditions.push('t.date_published <= ?'); params.push(filters.dateTo); }
+    if (filters.theme)    qb.andWhere('t.theme = :theme',         { theme: filters.theme });
+    if (filters.country)  qb.andWhere('t.country = :country',     { country: filters.country });
+    if (filters.dateFrom) qb.andWhere('t.datePublished >= :from', { from: filters.dateFrom });
+    if (filters.dateTo)   qb.andWhere('t.datePublished <= :to',   { to: filters.dateTo });
 
-    const where = `WHERE ${conditions.join(' AND ')}`;
+    const rows = await qb.orderBy(`t.${orderCol}`, 'DESC').take(10).getMany();
 
-    const rows = await this.remoteDs.query(
-      `SELECT t.*, q.theme, q.country
-       FROM x_tweets t
-       LEFT JOIN x_search_queries q ON q.id = t.query_id
-       ${where}
-       ORDER BY t.${sortCol} DESC
-       LIMIT 10`,
-      params,
-    );
-
-    return rows;
+    return rows.map(t => ({
+      external_id:     t.externalId,
+      post_text:       t.postText,
+      author:          t.author,
+      post_status:     t.postStatus,
+      date_published:  t.datePublished,
+      views_count:     t.viewsCount,
+      likes_count:     t.likesCount,
+      retweets_count:  t.retweetsCount,
+      replies_count:   t.repliesCount,
+      theme:           t.theme,
+      country:         t.country,
+    }));
   }
 }
