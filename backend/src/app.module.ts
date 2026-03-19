@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ServeStaticModule } from '@nestjs/serve-static';
 import { AppController } from './app.controller';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -80,6 +81,10 @@ import * as fs from 'fs';
       }),
     }),
 
+    ServeStaticModule.forRoot({
+      rootPath: path.join(process.cwd(), 'frontend', 'dist'),
+      exclude: ['/api/(.*)'],
+    }),
     SettingsModule,
     AuthModule,
     UsersModule,
