@@ -47,7 +47,8 @@ async function loadAiStats() {
 async function startAiBatch() {
   aiBatching.value = true
   try {
-    const r = await aiAnalysisApi.startBatch(500)
+    const dateFrom = localStorage.getItem('pwc_default_date_from') ?? undefined
+    const r = await aiAnalysisApi.startBatch(500, dateFrom)
     if (r.started) {
       ElMessage.success(`AI batch started: ${r.queued} posts queued`)
       // Poll status
@@ -245,20 +246,18 @@ const historyRangeIdx = ref(
 )
 const historyRangeLabel = computed(() => historyOptions[historyRangeIdx.value]?.label ?? '1 year')
 
-function onHistoryRange(e: Event) {
+async function onHistoryRange(e: Event) {
   const idx = Number((e.target as HTMLInputElement).value)
   historyRangeIdx.value = idx
   const months = historyOptions[idx].months
   localStorage.setItem(HISTORY_KEY, String(months))
-  // Update the filters store default dateFrom
-  if (months > 0) {
-    const d = new Date()
-    d.setMonth(d.getMonth() - months)
-    localStorage.setItem('pwc_default_date_from', d.toISOString().slice(0, 10))
-  } else {
-    localStorage.removeItem('pwc_default_date_from')
+
+  try {
+    await settingsApi.setAppSetting('history_months', String(months))
+    ElMessage.success(`Historical range saved: last ${historyRangeLabel.value}`)
+  } catch {
+    ElMessage.error('Failed to save range to database')
   }
-  ElMessage.success(`Dashboard will show data from last ${historyRangeLabel.value}`)
 }
 
 function fmtNum(n: any): string {

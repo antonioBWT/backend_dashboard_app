@@ -1,9 +1,10 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { SentimentCache } from './sentiment-cache.entity';
+import { TweetCache } from '../sync/tweet-cache.entity';
 import { SettingsService } from '../settings/settings.service';
 import OpenAI from 'openai';
 
@@ -20,15 +21,19 @@ interface SentimentFilters {
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private openai: OpenAI | null = null;
+  private defaultModel: string;
 
   constructor(
     @InjectRepository(SentimentCache, 'appConnection')
     private cacheRepo: Repository<SentimentCache>,
-    @Inject('DATA_SOURCE') private dataDs: DataSource,
+    @InjectRepository(TweetCache, 'appConnection')
+    private tweetCacheRepo: Repository<TweetCache>,
     private cfg: ConfigService,
     private settings: SettingsService,
   ) {
-    const apiKey = this.cfg.get('OPENAI_API_KEY');
+    // CHATGPT_MAX_API_TOKEN takes priority over OPENAI_API_KEY
+    const apiKey = this.cfg.get('CHATGPT_MAX_API_TOKEN') ?? this.cfg.get('OPENAI_API_KEY');
+    this.defaultModel = this.cfg.get('CHATGPT_MODEL') ?? 'gpt-4o-mini';
     if (apiKey) this.openai = new OpenAI({ apiKey });
   }
 
@@ -39,9 +44,10 @@ export class AiService {
 
   private async complete(systemPrompt: string, userPrompt: string, model: string, maxTokens: number): Promise<string> {
     if (!this.openai) return '';
+    const useModel = model === 'n/a' ? this.defaultModel : model;
     try {
       const res = await this.openai.chat.completions.create({
-        model,
+        model: useModel,
         max_tokens: maxTokens,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -52,9 +58,9 @@ export class AiService {
     } catch (e: any) {
       const code = e?.code ?? e?.status;
       if (code === 'insufficient_quota' || code === 429) {
-        this.logger.warn('OpenAI quota exceeded — returning mock data');
+        this.logger.warn('AI quota exceeded — returning mock data');
       } else {
-        this.logger.error(`OpenAI error: ${e?.message}`);
+        this.logger.error(`AI API error: ${e?.message}`);
       }
       return '';
     }
@@ -69,21 +75,19 @@ export class AiService {
       if (age < 6 * 60 * 60 * 1000) return cached.result;
     }
 
-    const conditions: string[] = ['t.date_published IS NOT NULL', 'LENGTH(t.post_text) > 20'];
-    const params: any[] = [];
-    if (filters.theme) { conditions.push('q.theme = ?'); params.push(filters.theme); }
-    if (filters.country) { conditions.push('q.country = ?'); params.push(filters.country); }
-    if (filters.dateFrom) { conditions.push('t.date_published >= ?'); params.push(filters.dateFrom); }
-    if (filters.dateTo) { conditions.push('t.date_published <= ?'); params.push(filters.dateTo); }
+    // Build query from local tweet_cache (SQLite appConnection)
+    const qb = this.tweetCacheRepo.createQueryBuilder('t')
+      .select('t.postText', 'post_text')
+      .where('LENGTH(t.postText) > 20')
+      .orderBy('t.viewsCount', 'DESC')
+      .limit(100);
 
-    const tweets = await this.dataDs.query(
-      `SELECT t.post_text FROM x_tweets t
-       JOIN x_search_queries q ON t.query_id = q.id
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY t.views_count DESC
-       LIMIT 100`,
-      params,
-    );
+    if (filters.theme)    qb.andWhere('t.theme = :theme',           { theme: filters.theme });
+    if (filters.country)  qb.andWhere('t.country = :country',       { country: filters.country });
+    if (filters.dateFrom) qb.andWhere('t.datePublished >= :from',   { from: filters.dateFrom });
+    if (filters.dateTo)   qb.andWhere('t.datePublished <= :to',     { to: filters.dateTo });
+
+    const tweets = await qb.getRawMany();
 
     if (!tweets.length) return { positive: 0, neutral: 0, negative: 0, total: 0 };
 
@@ -107,36 +111,35 @@ export class AiService {
   }
 
   async chat(question: string, filters: SentimentFilters) {
-    const conditions: string[] = ['t.date_published IS NOT NULL'];
-    const params: any[] = [];
-    if (filters.theme) { conditions.push('q.theme = ?'); params.push(filters.theme); }
-    if (filters.country) { conditions.push('q.country = ?'); params.push(filters.country); }
-    if (filters.dateFrom) { conditions.push('t.date_published >= ?'); params.push(filters.dateFrom); }
-    if (filters.dateTo) { conditions.push('t.date_published <= ?'); params.push(filters.dateTo); }
+    const qb = this.tweetCacheRepo.createQueryBuilder('t')
+      .select(['t.postText', 't.viewsCount', 't.likesCount', 't.datePublished', 't.theme']);
 
-    const statsRows = await this.dataDs.query(
-      `SELECT COUNT(*) as total, SUM(t.likes_count) as likes, SUM(t.views_count) as views,
-              MIN(t.date_published) as earliest, MAX(t.date_published) as latest
-       FROM x_tweets t JOIN x_search_queries q ON t.query_id = q.id
-       WHERE ${conditions.join(' AND ')}`,
-      params,
-    );
+    if (filters.theme)    qb.andWhere('t.theme = :theme',         { theme: filters.theme });
+    if (filters.country)  qb.andWhere('t.country = :country',     { country: filters.country });
+    if (filters.dateFrom) qb.andWhere('t.datePublished >= :from', { from: filters.dateFrom });
+    if (filters.dateTo)   qb.andWhere('t.datePublished <= :to',   { to: filters.dateTo });
 
-    const topTweets = await this.dataDs.query(
-      `SELECT t.post_text, t.views_count, t.likes_count, t.date_published, q.theme
-       FROM x_tweets t JOIN x_search_queries q ON t.query_id = q.id
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY t.views_count DESC
-       LIMIT 5`,
-      params,
-    );
+    const [statsRow, topTweets] = await Promise.all([
+      this.tweetCacheRepo.createQueryBuilder('t')
+        .select('COUNT(*)', 'total')
+        .addSelect('SUM(t.likesCount)', 'likes')
+        .addSelect('SUM(t.viewsCount)', 'views')
+        .addSelect('MIN(t.datePublished)', 'earliest')
+        .addSelect('MAX(t.datePublished)', 'latest')
+        .where(filters.theme    ? 't.theme = :theme'         : '1=1', { theme: filters.theme })
+        .andWhere(filters.country  ? 't.country = :country'  : '1=1', { country: filters.country })
+        .andWhere(filters.dateFrom ? 't.datePublished >= :from' : '1=1', { from: filters.dateFrom })
+        .andWhere(filters.dateTo   ? 't.datePublished <= :to'   : '1=1', { to: filters.dateTo })
+        .getRawOne(),
+      qb.orderBy('t.viewsCount', 'DESC').limit(5).getMany(),
+    ]);
 
     if (!this.openai) {
-      return { answer: 'AI Assistant is not configured. Please add OPENAI_API_KEY to the server settings.', mocked: true };
+      return { answer: 'AI Assistant is not configured. Please add CHATGPT_MAX_API_TOKEN to the server settings.', mocked: true };
     }
 
     const prompt = await this.settings.findByKey('chat_system');
-    const stats = statsRows[0];
+    const stats = statsRow;
     const context = `Dataset context:
 - Total tweets: ${stats.total}
 - Total likes: ${stats.likes}
@@ -145,7 +148,7 @@ export class AiService {
 - Active filters: theme=${filters.theme || 'all'}, country=${filters.country || 'all'}
 
 Top 5 most viewed tweets:
-${topTweets.map((t: any) => `- [${String(t.date_published).split('T')[0]}] ${t.post_text?.substring(0, 150)} (views: ${t.views_count})`).join('\n')}`;
+${topTweets.map((t: any) => `- [${t.datePublished}] ${t.postText?.substring(0, 150)} (views: ${t.viewsCount})`).join('\n')}`;
 
     const userPrompt = this.settings.fill(prompt.userPromptTemplate, { context, question });
     const answer = await this.complete(prompt.systemPrompt, userPrompt, prompt.model, prompt.maxTokens);

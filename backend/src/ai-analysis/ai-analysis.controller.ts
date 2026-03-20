@@ -55,8 +55,12 @@ export class AiAnalysisController {
    */
   @Post('batch/start')
   @UseGuards(AdminGuard)
-  startBatch(@Body('limit') limit?: number) {
-    return this.svc.startBatchAnalysis(limit ?? 500);
+  startBatch(
+    @Body('limit') limit?: number,
+    @Body('dateFrom') dateFrom?: string,
+    @Body('dateTo') dateTo?: string,
+  ) {
+    return this.svc.startBatchAnalysis(limit ?? 500, dateFrom, dateTo);
   }
 
   /** Admin only: retry posts that failed in previous batch */

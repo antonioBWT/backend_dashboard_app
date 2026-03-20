@@ -97,7 +97,7 @@ const chartOptions = computed(() => {
     navigator: {
       enabled: true,
       height: 40,
-      margin: 10,
+      margin: 30,
       maskFill: 'rgba(99,102,241,0.12)',
       outlineColor: '#DDE3F5',
       outlineWidth: 1,

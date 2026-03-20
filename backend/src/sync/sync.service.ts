@@ -368,7 +368,10 @@ export class SyncService implements OnModuleInit {
   }
 
   async queryHotThemes(filters: { country?: string; dateFrom?: string; dateTo?: string }) {
-    const endDate   = filters.dateTo   || new Date().toISOString().split('T')[0];
+    // Use max date in DB (not today) so hot themes work with historical data
+    const maxRow = await this.aggDailyRepo.createQueryBuilder('a')
+      .select('MAX(a.date)', 'maxDate').getRawOne();
+    const endDate = filters.dateTo || maxRow?.maxDate || new Date().toISOString().split('T')[0];
     const d         = new Date(endDate);
     const thisStart = new Date(d); thisStart.setDate(d.getDate() - 7);
     const prevStart = new Date(d); prevStart.setDate(d.getDate() - 14);

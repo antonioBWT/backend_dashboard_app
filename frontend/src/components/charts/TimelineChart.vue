@@ -208,13 +208,15 @@ const options = computed(() => {
       <span v-if="loading" class="loading-dot">●</span>
     </div>
 
-    <Chart
-      v-if="data.length"
-      :options="options"
-      style="width: 100%; display: block"
-      :key="granularity"
-    />
-    <div v-else-if="!loading" class="empty">No data available</div>
+    <div class="chart-min-wrap">
+      <Chart
+        v-if="data.length"
+        :options="options"
+        style="width: 100%; display: block"
+        :key="granularity"
+      />
+      <div v-else-if="!loading" class="empty">No data available</div>
+    </div>
   </div>
 </template>
 
@@ -254,6 +256,12 @@ const options = computed(() => {
   animation: pulse 1s ease-in-out infinite;
 }
 @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+.chart-min-wrap {
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+}
 
 .empty {
   height: 240px;

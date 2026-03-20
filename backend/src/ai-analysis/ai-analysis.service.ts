@@ -4,6 +4,7 @@ import { Repository, In } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { PostAnalysis } from './post-analysis.entity';
 import { TweetCache } from '../sync/tweet-cache.entity';
+import OpenAI from 'openai';
 
 export interface AnalysisResult {
   sentiment: 'positive' | 'neutral' | 'negative';
@@ -33,9 +34,17 @@ export class AiAnalysisService implements OnModuleInit {
     private cfg: ConfigService,
   ) {}
 
+  private openai: OpenAI | null = null;
+
   onModuleInit() {
-    this.baseUrl = this.cfg.get('AI_BASE_URL') ?? 'http://localhost:1337/v1';
-    this.model   = this.cfg.get('AI_MODEL')    ?? 'qwen2.5-7b-instruct';
+    this.model = this.cfg.get('CHATGPT_MODEL') ?? this.cfg.get('AI_MODEL') ?? 'gpt-4o-mini';
+    const apiKey = this.cfg.get('CHATGPT_MAX_API_TOKEN') ?? this.cfg.get('OPENAI_API_KEY');
+    if (apiKey) {
+      this.openai = new OpenAI({ apiKey });
+    } else {
+      // Fallback: Jan.ai compatible base URL
+      this.baseUrl = this.cfg.get('AI_BASE_URL') ?? 'http://localhost:1337/v1';
+    }
   }
 
   /** Current queue / progress status */
@@ -64,33 +73,42 @@ export class AiAnalysisService implements OnModuleInit {
   ): Promise<AnalysisResult> {
     const prompt = this.buildPrompt(text, theme, platform);
     const t0 = Date.now();
+    const systemMsg = 'You are a social media analyst specialized in Middle East content. Always respond with valid JSON matching the schema provided.';
 
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    let raw: string;
+
+    if (this.openai) {
+      const res = await this.openai.chat.completions.create({
         model: this.model,
         temperature: 0,
         max_tokens: 512,
         response_format: { type: 'json_object' },
         messages: [
-          {
-            role: 'system',
-            content:
-              'You are a social media analyst specialized in Middle East content. ' +
-              'Always respond with valid JSON matching the schema provided.',
-          },
+          { role: 'system', content: systemMsg },
           { role: 'user', content: prompt },
         ],
-      }),
-    });
-
-    if (!res.ok) {
-      throw new Error(`AI API error ${res.status}: ${await res.text()}`);
+      });
+      raw = res.choices?.[0]?.message?.content ?? '{}';
+    } else {
+      const res = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.model,
+          temperature: 0,
+          max_tokens: 512,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemMsg },
+            { role: 'user', content: prompt },
+          ],
+        }),
+      });
+      if (!res.ok) throw new Error(`AI API error ${res.status}: ${await res.text()}`);
+      const data = await res.json();
+      raw = data.choices?.[0]?.message?.content ?? '{}';
     }
 
-    const data = await res.json();
-    const raw  = data.choices?.[0]?.message?.content ?? '{}';
     const parsed = JSON.parse(raw);
 
     const ms = Date.now() - t0;
@@ -149,10 +167,9 @@ export class AiAnalysisService implements OnModuleInit {
    * Runs in background, concurrency = 3.
    * Returns immediately — check status via getStatus().
    */
-  async startBatchAnalysis(limit = 500): Promise<{ started: boolean; queued: number }> {
+  async startBatchAnalysis(limit = 500, dateFrom?: string, dateTo?: string): Promise<{ started: boolean; queued: number }> {
     if (this.isRunning) return { started: false, queued: 0 };
 
-    // Find tweets without analysis
     const analyzed = await this.analysisRepo
       .createQueryBuilder('a')
       .select('a.externalId')
@@ -161,10 +178,12 @@ export class AiAnalysisService implements OnModuleInit {
 
     const analyzedIds = new Set(analyzed.map(a => a.externalId));
 
-    const tweets = await this.tweetCacheRepo.find({
-      select: ['externalId', 'postText', 'theme'],
-      take: limit,
-    });
+    const qb = this.tweetCacheRepo.createQueryBuilder('t')
+      .select(['t.externalId', 't.postText', 't.theme'])
+      .take(limit);
+    if (dateFrom) qb.andWhere('t.datePublished >= :from', { from: dateFrom });
+    if (dateTo)   qb.andWhere('t.datePublished <= :to',   { to: dateTo });
+    const tweets = await qb.getMany();
 
     const pending = tweets.filter(t => !analyzedIds.has(t.externalId));
 

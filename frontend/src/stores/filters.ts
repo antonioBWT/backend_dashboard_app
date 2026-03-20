@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { settingsApi } from '../api'
+import { settingsApi, statsApi } from '../api'
 
 export const useFiltersStore = defineStore('filters', () => {
   const theme = ref<string>('')
@@ -12,13 +12,20 @@ export const useFiltersStore = defineStore('filters', () => {
   // Load defaults from admin settings (called once on app mount)
   async function loadDefaults() {
     try {
-      const d = await settingsApi.getDashboardDefaults()
-      if (d.country  !== undefined) country.value  = d.country
-      if (d.theme    !== undefined) theme.value    = d.theme
-      if (d.dateFrom !== undefined) dateFrom.value = d.dateFrom
-      if (d.dateTo   !== undefined) dateTo.value   = d.dateTo
+      const [appSettings, dateRange] = await Promise.all([
+        settingsApi.getAppSettings().catch(() => ({})),
+        statsApi.dateRange().catch(() => null),
+      ])
+
+      const months = Number(appSettings?.history_months ?? 0)
+      if (months > 0 && dateRange?.max) {
+        // Compute dateFrom relative to max date in dataset (not today)
+        const d = new Date(dateRange.max)
+        d.setMonth(d.getMonth() - months)
+        dateFrom.value = d.toISOString().slice(0, 10)
+      }
     } catch {
-      // If backend unreachable, leave empty (show all data)
+      // If backend unreachable, show all data
     }
   }
 

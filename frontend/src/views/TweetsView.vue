@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
-import { tweetsApi, statsApi, aiAnalysisApi } from "../api";
+import { tweetsApi, statsApi, aiAnalysisApi, settingsApi } from "../api";
 import { ElMessage } from "element-plus";
 import PageLoader from "../components/common/PageLoader.vue";
 
@@ -173,11 +173,20 @@ function sentimentColor(s: string | null): string {
   return "#8b5cf6";
 }
 
+const dateRange = ref<{ min: string; max: string } | null>(null);
+const defaultDateFrom = ref('');
+
+function disabledDate(time: Date): boolean {
+  if (!dateRange.value) return false;
+  const d = time.toISOString().slice(0, 10);
+  return d < dateRange.value.min || d > dateRange.value.max;
+}
+
 function resetFilters() {
   filters.value = {
     country: "",
     theme: "",
-    dateFrom: "",
+    dateFrom: defaultDateFrom.value,
     dateTo: "",
     postStatus: "",
     search: "",
@@ -191,12 +200,15 @@ function onPageChange(p: number) {
   filters.value.page = p;
 }
 
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
 watch(
   () => ({ ...filters.value }),
   (n, o) => {
-    // Reset to page 1 on filter change (not page change itself)
     if (n.page === o.page) filters.value.page = 1;
-    load();
+    if (debounceTimer) clearTimeout(debounceTimer);
+    const delay = n.search !== o.search ? 500 : 300;
+    debounceTimer = setTimeout(load, delay);
   },
   { deep: true },
 );
@@ -222,9 +234,24 @@ function postStatusColor(s: string): string {
 }
 
 onMounted(async () => {
-  const [t, c] = await Promise.all([statsApi.themes(), statsApi.countries()]);
+  const [t, c, dr, appSettings] = await Promise.all([
+    statsApi.themes(),
+    statsApi.countries(),
+    statsApi.dateRange().catch(() => null),
+    settingsApi.getAppSettings().catch(() => ({})),
+  ]);
   themes.value = t;
   countries.value = c;
+  if (dr?.min && dr?.max) dateRange.value = dr;
+
+  // Apply history_months from global settings relative to max DB date
+  const months = Number(appSettings?.history_months ?? 0);
+  if (months > 0 && dr?.max) {
+    const d = new Date(dr.max);
+    d.setMonth(d.getMonth() - months);
+    defaultDateFrom.value = d.toISOString().slice(0, 10);
+    filters.value.dateFrom = defaultDateFrom.value;
+  }
   load();
 });
 </script>
@@ -325,6 +352,7 @@ onMounted(async () => {
             type="date"
             value-format="YYYY-MM-DD"
             style="width: 155px"
+            :disabled-date="disabledDate"
           />
         </div>
         <div class="filter-item">
@@ -334,6 +362,7 @@ onMounted(async () => {
             type="date"
             value-format="YYYY-MM-DD"
             style="width: 155px"
+            :disabled-date="disabledDate"
           />
         </div>
         <div class="filter-item">

@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PromptConfig } from './prompt-config.entity';
+import { AppSetting } from './app-setting.entity';
 import { SettingsService } from './settings.service';
 import { SettingsController } from './settings.controller';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([PromptConfig], 'appConnection')],
+  imports: [TypeOrmModule.forFeature([PromptConfig, AppSetting], 'appConnection')],
   providers: [SettingsService],
   controllers: [SettingsController],
   exports: [SettingsService],

@@ -21,6 +21,7 @@ import { TweetCache } from './sync/tweet-cache.entity';
 import { Topic } from './topics/topic.entity';
 import { TopicAssignment } from './topics/topic-assignment.entity';
 import { PromptConfig } from './settings/prompt-config.entity';
+import { AppSetting } from './settings/app-setting.entity';
 import { AiAnalysisModule } from './ai-analysis/ai-analysis.module';
 import { PostAnalysis } from './ai-analysis/post-analysis.entity';
 import * as path from 'path';
@@ -44,7 +45,7 @@ import * as fs from 'fs';
           return {
             type: 'sqlite',
             database: dbPath,
-            entities: [User, SentimentCache, AggDaily, AggAuthor, SyncStatus, TweetCache, Topic, TopicAssignment, PromptConfig, PostAnalysis],
+            entities: [User, SentimentCache, AggDaily, AggAuthor, SyncStatus, TweetCache, Topic, TopicAssignment, PromptConfig, PostAnalysis, AppSetting],
             synchronize: true,
           };
         }
@@ -55,7 +56,7 @@ import * as fs from 'fs';
           username: cfg.get<string>('APP_DB_USER'),
           password: cfg.get<string>('APP_DB_PASS'),
           database: cfg.get<string>('APP_DB_NAME'),
-          entities: [User, SentimentCache, AggDaily, AggAuthor, SyncStatus, TweetCache, Topic, TopicAssignment, PromptConfig, PostAnalysis],
+          entities: [User, SentimentCache, AggDaily, AggAuthor, SyncStatus, TweetCache, Topic, TopicAssignment, PromptConfig, PostAnalysis, AppSetting],
           synchronize: true,
           charset: 'utf8mb4',
         };

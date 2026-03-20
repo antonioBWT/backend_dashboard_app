@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PromptConfig } from './prompt-config.entity';
+import { AppSetting } from './app-setting.entity';
 
 export interface DashboardDefaults {
   country: string;
@@ -93,7 +94,23 @@ export class SettingsService implements OnModuleInit {
   constructor(
     @InjectRepository(PromptConfig, 'appConnection')
     private promptRepo: Repository<PromptConfig>,
+    @InjectRepository(AppSetting, 'appConnection')
+    private appSettingRepo: Repository<AppSetting>,
   ) {}
+
+  async getSetting(key: string): Promise<string | null> {
+    const row = await this.appSettingRepo.findOne({ where: { key } });
+    return row?.value ?? null;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    await this.appSettingRepo.save(this.appSettingRepo.create({ key, value }));
+  }
+
+  async getAllSettings(): Promise<Record<string, string>> {
+    const rows = await this.appSettingRepo.find();
+    return Object.fromEntries(rows.map(r => [r.key, r.value ?? '']));
+  }
 
   async onModuleInit() {
     for (const def of DEFAULTS) {

@@ -31,4 +31,14 @@ export class SettingsController {
   updateDefaults(@Body() body: { country: string; theme: string; dateFrom: string; dateTo: string }) {
     return this.settingsService.updateDashboardDefaults(body);
   }
+
+  @Get('app')
+  getAppSettings() {
+    return this.settingsService.getAllSettings();
+  }
+
+  @Put('app/:key')
+  setAppSetting(@Param('key') key: string, @Body('value') value: string) {
+    return this.settingsService.setSetting(key, value);
+  }
 }

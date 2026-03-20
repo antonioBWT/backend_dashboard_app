@@ -291,7 +291,7 @@ const chartOptions = computed(() => {
 @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 
 .chart-wrap {
-  min-height: 380px;
+  min-height: 400px;
   display: flex;
   flex-direction: column;
 }

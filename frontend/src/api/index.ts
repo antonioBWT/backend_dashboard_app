@@ -113,8 +113,8 @@ export const aiAnalysisApi = {
     api.get(`/ai-analysis/post/${externalId}`).then((r) => r.data),
   analyzePost: (externalId: string) =>
     api.post(`/ai-analysis/analyze/${externalId}`).then((r) => r.data),
-  startBatch: (limit?: number) =>
-    api.post('/ai-analysis/batch/start', { limit }).then((r) => r.data),
+  startBatch: (limit?: number, dateFrom?: string, dateTo?: string) =>
+    api.post('/ai-analysis/batch/start', { limit, dateFrom, dateTo }).then((r) => r.data),
   retryFailed: () =>
     api.post('/ai-analysis/batch/retry-failed').then((r) => r.data),
   testAnalyze: (text: string, theme?: string, platform?: string) =>
@@ -127,4 +127,7 @@ export const settingsApi = {
   updatePrompt: (key: string, data: any) => api.put(`/admin/settings/prompts/${key}`, data).then((r) => r.data),
   getDashboardDefaults: () => api.get('/stats/dashboard-defaults').then((r) => r.data),
   updateDashboardDefaults: (data: any) => api.put('/admin/settings/defaults', data).then((r) => r.data),
+  // Global app settings (separate table)
+  getAppSettings: () => api.get('/admin/settings/app').then((r) => r.data),
+  setAppSetting: (key: string, value: string) => api.put(`/admin/settings/app/${key}`, { value }).then((r) => r.data),
 }
